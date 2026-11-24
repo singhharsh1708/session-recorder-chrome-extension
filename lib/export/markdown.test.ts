@@ -17,7 +17,9 @@ import type {
 } from '@/lib/session/types';
 import { makeDefaultSettings } from '@/lib/session/settings';
 import { scoreEvent } from '@/lib/session/events';
+import { marked } from 'marked';
 import { formatClock, renderManifest, renderReport } from './markdown';
+import { buildMarkdownHtml } from './report-html';
 import type { RenderInput } from './markdown';
 
 const SESSION_ID = 'sess_test';
@@ -444,6 +446,144 @@ describe('renderReport', () => {
     expect(md).toContain('A single remark.');
     // Not stitched: no time-span suffix on a singleton.
     expect(md).not.toContain('·');
+  });
+});
+
+describe('renderReport code blocks', () => {
+  const captured = 'LLM said:\n```\n## Not a heading\n[link](https://example.com)\n```\ndone';
+
+  function withEvents(events: SessionEvent[]): RenderInput {
+    return { ...buildSession(), events };
+  }
+
+  function codeBlocks(md: string): string[] {
+    return marked
+      .lexer(md, { gfm: true })
+      .filter((token) => token.type === 'code')
+      .map((token) => (token as { text: string }).text);
+  }
+
+  it('keeps console text with its own fence inside one code block', () => {
+    const md = renderReport(
+      withEvents([ev({ t: 1000, tabId: 1, type: 'console', payload: { level: 'log', text: captured } })]),
+    );
+    expect(codeBlocks(md)).toContain(captured);
+  });
+
+  it('keeps an error stack with its own fence inside one code block', () => {
+    const md = renderReport(
+      withEvents([
+        ev({
+          t: 1000,
+          tabId: 1,
+          type: 'error',
+          payload: { message: 'boom', origin: 'exception', stack: captured },
+        }),
+      ]),
+    );
+    expect(codeBlocks(md)).toContain(captured);
+  });
+
+  it('does not render captured text as markdown in the HTML report', () => {
+    const md = renderReport(
+      withEvents([ev({ t: 1000, tabId: 1, type: 'console', payload: { level: 'log', text: captured } })]),
+    );
+    const html = buildMarkdownHtml('report', md, (h) => h);
+    expect(html).not.toContain('<h2>Not a heading</h2>');
+    expect(html).not.toContain('<a href="https://example.com">');
+  });
+});
+
+describe('renderReport inline text', () => {
+  const pageText = '![t](https://evil.example/t.png) [log in](https://evil.example/) <img src=x>';
+
+  function render(events: SessionEvent[]): string {
+    return renderReport({ ...buildSession(), events });
+  }
+
+  function html(md: string): string {
+    return buildMarkdownHtml('report', md, (h) => h);
+  }
+
+  it.each([
+    ['a page title', ev({ t: 1000, tabId: 1, type: 'nav', payload: { url: 'https://app.example.com/', title: pageText } })],
+    ['a marker name', ev({ t: 1000, tabId: 1, type: 'marker', payload: { name: pageText } })],
+    ['an error message', ev({ t: 1000, tabId: 1, type: 'error', payload: { message: pageText, origin: 'exception' } })],
+    [
+      'a request body MIME type',
+      ev({
+        t: 1000,
+        tabId: 1,
+        type: 'net-request',
+        payload: {
+          requestId: 'req1',
+          method: 'POST',
+          url: 'https://api.example.com/v1/x',
+          status: 200,
+          requestHeaders: [],
+          responseHeaders: [],
+          requestBody: { present: true, mime: pageText, text: '{}' },
+        },
+      }),
+    ],
+    [
+      'a console source',
+      ev({ t: 1000, tabId: 1, type: 'console', payload: { level: 'log', text: 'ok', source: pageText } }),
+    ],
+    [
+      'a text selection',
+      ev({
+        t: 1000,
+        tabId: 1,
+        type: 'text-select',
+        payload: { text: pageText, descriptor: { tag: 'p', selector: 'p.intro' }, cleared: false },
+      }),
+    ],
+  ])('renders links, images and HTML in %s as plain text', (_, event) => {
+    const out = html(render([event]));
+    expect(out).not.toContain('<img');
+    expect(out).not.toContain('>log in</a>');
+    expect(out).toContain('[log in](');
+  });
+
+  it('renders links, images and HTML in a tab title and URL as plain text', () => {
+    const input = buildSession();
+    const tabs = [{ ...input.session.tabs[0]!, title: pageText, url: `https://app.example.com/?q=${pageText}` }];
+    const out = html(renderReport({ ...input, session: { ...input.session, tabs }, events: [] }));
+    expect(out).not.toContain('<img');
+    expect(out).not.toContain('>log in</a>');
+  });
+
+  it('keeps a JSON key with backticks inside the shape code span', () => {
+    const shape = '{ a`b ![s](https://evil.example/s.png) `: 1 }';
+    const out = html(
+      render([
+        ev({
+          t: 1000,
+          tabId: 1,
+          type: 'net-request',
+          payload: {
+            requestId: 'req1',
+            method: 'GET',
+            url: 'https://api.example.com/v1/x',
+            status: 200,
+            requestHeaders: [],
+            responseHeaders: [],
+            bodyShape: { response: shape },
+          },
+        }),
+      ]),
+    );
+    expect(out).not.toContain('<img');
+  });
+
+  it('keeps a captured URL with brackets linking to the same address', () => {
+    const url = 'https://shop.example/list?ids[]=1';
+    const out = html(
+      render([ev({ t: 1000, tabId: 1, type: 'nav', payload: { url, title: 'List' } })]),
+    );
+    expect(out).toContain('href="https://shop.example/list?ids%5B%5D=1"');
+    expect(out).not.toContain('\\');
   });
 });
 

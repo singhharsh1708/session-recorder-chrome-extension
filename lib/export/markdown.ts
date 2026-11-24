@@ -165,7 +165,7 @@ function renderHeader(
     lines.push('| --- | --- | --- | --- |');
     for (const tab of session.tabs) {
       lines.push(
-        `| ${tab.tabId} | ${tab.role} | ${escapeCell(tab.url)} | ${escapeCell(
+        `| ${tab.tabId} | ${tab.role} | ${escapeCell(escapeUrl(tab.url))} | ${escapeCell(
           tab.title,
         )} |`,
       );
@@ -250,7 +250,7 @@ function renderEvent(
           : '';
       const mods =
         e.payload.modifiers.length > 0 ? `${e.payload.modifiers.join('+')}+` : '';
-      lines.push(`${clock} KEY ${mods}${e.payload.key}${where}`);
+      lines.push(`${clock} KEY ${mods}${escapeInline(e.payload.key)}${where}`);
       break;
     }
     case 'hover': {
@@ -288,7 +288,7 @@ function renderEvent(
     case 'nav': {
       lines.push('');
       lines.push(
-        `## ${clock} NAV ${escapeInline(e.payload.url)}${titlePart(e.payload.title)}`,
+        `## ${clock} NAV ${escapeUrl(e.payload.url)}${titlePart(e.payload.title)}`,
       );
       lines.push('');
       break;
@@ -296,7 +296,7 @@ function renderEvent(
     case 'spa-route': {
       lines.push('');
       lines.push(
-        `## ${clock} ROUTE (${e.payload.method}) ${escapeInline(
+        `## ${clock} ROUTE (${e.payload.method}) ${escapeUrl(
           e.payload.url,
         )}${titlePart(e.payload.title)}`,
       );
@@ -307,7 +307,7 @@ function renderEvent(
       lines.push('');
       lines.push(
         `## ${clock} TAB SWITCH → tab ${e.payload.toTabId}${
-          e.payload.toUrl ? ` ${escapeInline(e.payload.toUrl)}` : ''
+          e.payload.toUrl ? ` ${escapeUrl(e.payload.toUrl)}` : ''
         }${titlePart(e.payload.toTitle)}`,
       );
       lines.push('');
@@ -317,7 +317,7 @@ function renderEvent(
       lines.push('');
       lines.push(
         `## ${clock} TAB OPENED${
-          e.payload.url ? ` ${escapeInline(e.payload.url)}` : ''
+          e.payload.url ? ` ${escapeUrl(e.payload.url)}` : ''
         }${titlePart(e.payload.title)}`,
       );
       lines.push('');
@@ -327,7 +327,7 @@ function renderEvent(
       lines.push('');
       lines.push(
         `## ${clock} TAB CLOSED${
-          e.payload.url ? ` ${escapeInline(e.payload.url)}` : ''
+          e.payload.url ? ` ${escapeUrl(e.payload.url)}` : ''
         }${titlePart(e.payload.title)}`,
       );
       lines.push('');
@@ -344,22 +344,24 @@ function renderEvent(
     case 'console': {
       const p = e.payload;
       const repeat = p.repeat && p.repeat > 1 ? ` (×${p.repeat})` : '';
-      const src = p.source ? ` @ ${p.source}` : '';
+      const src = p.source ? ` @ ${escapeInline(p.source)}` : '';
       lines.push(`${clock} console.${p.level}${repeat}${src}`);
-      lines.push('```');
+      const fence = codeFence(p.text);
+      lines.push(fence);
       lines.push(p.text);
-      lines.push('```');
+      lines.push(fence);
       break;
     }
     case 'error': {
       const p = e.payload;
       const repeat = p.repeat && p.repeat > 1 ? ` (×${p.repeat})` : '';
       lines.push('');
-      lines.push(`⚠ **ERROR ${clock}**${repeat} (${p.origin}) ${oneLine(p.message)}`);
+      lines.push(`⚠ **ERROR ${clock}**${repeat} (${p.origin}) ${escapeInline(oneLine(p.message))}`);
       if (p.stack) {
-        lines.push('```');
+        const fence = codeFence(p.stack);
+        lines.push(fence);
         lines.push(p.stack);
-        lines.push('```');
+        lines.push(fence);
       }
       lines.push('');
       break;
@@ -392,7 +394,7 @@ function renderEvent(
         p.transcript != null && p.transcript.trim().length > 0
           ? oneLine(p.transcript)
           : p.transcriptionError
-            ? `(transcription failed: ${oneLine(p.transcriptionError)})`
+            ? `(transcription failed: ${escapeInline(oneLine(p.transcriptionError))})`
             : '(no transcript)';
       // Smart anchoring: note what the user was doing as they spoke.
       const anchor = anchors?.get(e.id);
@@ -417,12 +419,12 @@ function renderEvent(
     case 'file-attached': {
       const p = e.payload;
       const verb = e.type === 'file-attached' ? 'ATTACHED' : 'CAPTURED';
-      const ctx = p.contextText ? ` — ${oneLine(p.contextText)}` : '';
+      const ctx = p.contextText ? ` — ${escapeInline(oneLine(p.contextText))}` : '';
       const meta = p.metadataOnly ? ', metadata-only' : '';
       const path = p.assetId ? input.assetPath(p.assetId) : undefined;
       const link = path ? ` → \`${path}\`` : '';
       lines.push(
-        `${clock} 📎 FILE ${verb} "${escapeInline(p.fileName)}" (${p.mime}, ${humanBytes(
+        `${clock} 📎 FILE ${verb} "${escapeInline(p.fileName)}" (${escapeInline(p.mime)}, ${humanBytes(
           p.size,
         )}${meta})${ctx}${link}`,
       );
@@ -461,7 +463,7 @@ function renderNetRequest(
   const clock = `[${formatClock(e.t)}]`;
   const p = e.payload;
   const status = p.failed
-    ? `FAILED${p.failureReason ? ` (${p.failureReason})` : ''}`
+    ? `FAILED${p.failureReason ? ` (${escapeInline(p.failureReason)})` : ''}`
     : p.status != null
       ? String(p.status)
       : '—';
@@ -473,7 +475,7 @@ function renderNetRequest(
   // Collapsed repeated requests take precedence — the body was thrown away.
   if (p.collapsed) {
     const statuses = p.collapsed.statuses.join(', ');
-    const note = p.collapsed.note ? ` — ${p.collapsed.note}` : '';
+    const note = p.collapsed.note ? ` — ${escapeInline(p.collapsed.note)}` : '';
     lines.push(
       `> (×${p.collapsed.count} similar…) statuses: ${statuses}${note}`,
     );
@@ -484,10 +486,10 @@ function renderNetRequest(
   // Shape summary form.
   if (p.bodyShape) {
     if (p.bodyShape.request) {
-      lines.push(`- request shape: \`${oneLine(p.bodyShape.request)}\``);
+      lines.push(`- request shape: ${codeSpan(oneLine(p.bodyShape.request))}`);
     }
     if (p.bodyShape.response) {
-      lines.push(`- response shape: \`${oneLine(p.bodyShape.response)}\``);
+      lines.push(`- response shape: ${codeSpan(oneLine(p.bodyShape.response))}`);
     }
     lines.push('');
     return;
@@ -524,7 +526,7 @@ function renderBody(
     return;
   }
   const notes: string[] = [];
-  if (body.mime) notes.push(body.mime);
+  if (body.mime) notes.push(escapeInline(body.mime));
   if (body.base64) notes.push('base64');
   if (body.truncated) {
     notes.push(
@@ -608,7 +610,7 @@ function renderAppendices(
       const p = e.payload;
       const status = p.failed ? 'FAIL' : p.status != null ? String(p.status) : '—';
       lines.push(
-        `- [${formatClock(e.t)}] ${status} ${p.method} ${escapeInline(p.url)}`,
+        `- [${formatClock(e.t)}] ${status} ${p.method} ${escapeUrl(p.url)}`,
       );
     }
   }
@@ -696,6 +698,20 @@ function titlePart(title: string | undefined): string {
   return title ? ` — ${escapeInline(oneLine(title))}` : '';
 }
 
+/**
+ * A backtick fence longer than any backtick run in `text`, so captured text
+ * that contains its own fence line cannot close the block early (CommonMark).
+ */
+function codeFence(text: string): string {
+  return '`'.repeat(Math.max(3, longestBacktickRun(text) + 1));
+}
+
+function longestBacktickRun(text: string): number {
+  let longest = 0;
+  for (const run of text.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+  return longest;
+}
+
 function fenceLang(mime: string | undefined): string {
   if (!mime) return '';
   if (mime.includes('json')) return 'json';
@@ -733,13 +749,27 @@ function oneLine(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-/** Escape the pipe and backtick characters that would break inline/table cells. */
+/** Keep captured inline text from forming code spans, links, images or HTML. */
 function escapeInline(s: string): string {
-  return s.replace(/`/g, 'ˋ');
+  return s.replace(/`/g, 'ˋ').replace(/[\\[\]<>]/g, '\\$&');
+}
+
+/**
+ * Like escapeInline for a captured URL, but percent-encodes instead of adding
+ * backslashes, which would end up inside the autolinked address.
+ */
+function escapeUrl(s: string): string {
+  return s.replace(/`/g, 'ˋ').replace(/[\\[\]<>]/g, (c) => encodeURIComponent(c));
 }
 
 function escapeCell(s: string): string {
-  return oneLine(s).replace(/\|/g, '\\|').replace(/`/g, 'ˋ');
+  return escapeInline(oneLine(s)).replace(/\|/g, '\\|');
+}
+
+/** An inline code span whose backtick run is longer than any run inside `text`. */
+function codeSpan(text: string): string {
+  const fence = '`'.repeat(longestBacktickRun(text) + 1);
+  return `${fence} ${text} ${fence}`;
 }
 
 /**
